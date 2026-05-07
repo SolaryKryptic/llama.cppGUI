@@ -251,45 +251,62 @@ class LlamaServerGUI:
         """Construct all sections and pack them into a scrollable canvas."""
         root = self.root
 
+        # Use grid so everything expands properly with the window.
+        root.grid_rowconfigure(0, weight=1)
+        root.grid_columnconfigure(0, weight=1)
+
+        outer_frame = ttk.Frame(root, padding=(6, 4))
+        outer_frame.grid(row=0, column=0, sticky="ns")
+
         # Title label at top of window (bold, larger font).
         title_label = ttk.Label(
-            root, text="llama-server CLI Generator",
-            font=("Segoe UI", 16, "bold"), padding=(20, 15, 20, 8)
+            outer_frame, text="llama-server CLI Generator",
+            font=("Segoe UI", 16, "bold")
         )
-        title_label.pack(fill="x")
+        title_label.grid(row=0, column=0, sticky="ew", pady=(8, 4))
 
         # Scrollable canvas area for the section frames.
-        main_frame = ttk.Frame(root)
-        main_frame.pack(fill="both", expand=True, padx=6, pady=(0, 4))
+        inner_frame = ttk.Frame(outer_frame)
+        inner_frame.grid(row=1, column=0, sticky="nswe")
+        outer_frame.columnconfigure(0, weight=1)
 
-        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        self.canvas = tk.Canvas(inner_frame, highlightthickness=0, bg="#f5f5f5")
         scrollbar = ttk.Scrollbar(
-            main_frame, orient="vertical", command=canvas.yview
+            inner_frame, orient="vertical", command=self.canvas.yview
         )
-        self.scrollable = ttk.Frame(canvas)
-        scroll_content_id = canvas.create_window((0, 0), window=self.scrollable, anchor="nw")
+        self.scrollable = ttk.Frame(self.canvas)
+        scroll_content_id = self.canvas.create_window((0, 5), window=self.scrollable, anchor="nw")
 
         def _on_scroll_configure(event):
             """Update the scroll region whenever section frames change size."""
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            bbox = self.canvas.bbox("all")
+            if bbox:
+                self.canvas.configure(scrollregion=(*bbox[:4],))
 
-        self.scrollable.bind("<Configure>", lambda e: (_update_content_width(e), _on_scroll_configure(e)))
-
-        # Helper to keep canvas width in sync with content area.
         def _update_content_width(event):
             """Resize the scrollable frame to match parent canvas width."""
-            canvas.itemconfigure(scroll_content_id, width=event.width)
+            w = event.width or root.winfo_reqwidth()
+            self.canvas.itemconfigure(scroll_content_id, width=w)
+            bbox = self.canvas.bbox("all")
+            if bbox:
+                self.canvas.configure(scrollregion=(*bbox[:4],))
 
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
+        def _on_scroll(event):
+            """Handle scroll + resize."""
+            return (_update_content_width(event), _on_scroll_configure(event))
+
+        self.scrollable.bind("<Configure>", lambda e: _on_scroll(e))
+
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True, pady=(0, 4))
         scrollbar.pack(side="right", fill="y")
 
-        # Bind mousewheel scrolling to the canvas only (not whole window).
+        # Bind mousewheel scrolling.
         def _on_mousewheel(event):
             direction = -1 if event.delta > 0 else 1
-            canvas.yview_scroll(int(1.5 * abs(direction)), "units" if direction < 0 else "pages")
+            self.canvas.yview_scroll(int(1.5 * abs(direction)), "units" if direction < 0 else "pages")
 
-        root.bind_all("<MouseWheel>", lambda e: (_update_content_width(e), _on_mousewheel(e)))
+        root.bind_all("<MouseWheel>", lambda e: _on_mousewheel(e))
 
         # Build each section into the scrollable frame (in order).
         self._section_model_loading(self.scrollable)
@@ -658,9 +675,4 @@ class LlamaServerGUI:
         self.root.clipboard_append(cmd)
 
 
-if __name__ == "__main__":
-    root = Tk()
-    gui = LlamaServerGUI(root)
-    root.title("llama-server CLI Generator")
-    root.geometry("720x680")
-    root.mainloop()
+
