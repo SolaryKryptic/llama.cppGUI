@@ -170,24 +170,33 @@ class LlamaServerGUI:
         # Change handlers — update config state and trigger command rebuild.
         # -----------------------------------------------------------------------
         def _on_low_vram_change(*_):
-            if lv_bool_low_vram.get():
-                ml_bool_mlock.set(False)
-                self.config.mlock = False
-            self.config.low_vram = bool(lv_bool_low_vram.get())
+            try:
+                if lv_bool_low_vram.get():
+                    ml_bool_mlock.set(False)
+                    self.config.mlock = False
+                self.config.low_vram = bool(lv_bool_low_vram.get())
+            except Exception:
+                pass
 
         def _on_mlock_change(*_):
-            if ml_bool_mlock.get():
-                lv_bool_low_vram.set(False)
-                self.config.low_vram = False
-            self.config.mlock = bool(ml_bool_mlock.get())
+            try:
+                if ml_bool_mlock.get():
+                    lv_bool_low_vram.set(False)
+                    self.config.low_vram = False
+                self.config.mlock = bool(ml_bool_mlock.get())
+            except Exception:
+                pass
 
         def _on_model_change(*_):
             self.config.model_path = sv_model_path.get()
 
         def _on_gpu_layers_change(*_):
-            val = iv_auto_gpu.get()
-            if -1 <= val <= 99:
+            try:
+                val = int(iv_auto_gpu.get())
+                if not (-1 <= val <= 99): return
                 self.config.n_gpu_layers = val
+            except (ValueError, TypeError):
+                pass
 
         def _on_ctx_enabled_change(*_):
             self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
@@ -196,42 +205,70 @@ class LlamaServerGUI:
             self.config.host = sv_host.get() or "0.0.0.0"
 
         def _on_port_change(*_):
-            val = max(1, min(int(str(iv_port.get())), 65535)) if iv_port.get() else 8080
-            self.config.port = val
+            try:
+                val = int(iv_port.get())
+                if not (1 <= val <= 65535): return
+                self.config.port = max(1, min(val, 65535))
+            except (ValueError, TypeError):
+                pass
 
         def _on_threads_enabled_change(*_):
             self.config.threads_enabled = bool(iv_threads_enabled.get())
 
         def _on_num_threads_change(*_):
-            val = max(1, min(int(str(iv_threads_val.get())), 256)) if iv_threads_val.get() else os.cpu_count() or 4
-            self.config.num_threads = val
+            try:
+                val = int(iv_threads_val.get())
+                if not (1 <= val <= 256): return
+                self.config.num_threads = max(1, min(val, 256))
+            except (ValueError, TypeError):
+                pass
 
 
 
 
 
         # Register all traces on the Tk variables so every change triggers live command update.
-        lv_bool_low_vram.trace_add("write", lambda *_: (_on_low_vram_change(), _update_command()))
-        ml_bool_mlock.trace_add("write", lambda *_: (_on_mlock_change(), _update_command()))
-        iv_auto_gpu.trace_add("write", lambda *_: (_on_gpu_layers_change(), _update_command()))
+        lv_bool_low_vram.trace_add("write", lambda *_: (_on_low_vram_change(), self._update_command()))
+        ml_bool_mlock.trace_add("write", lambda *_: (_on_mlock_change(), self._update_command()))
+        iv_auto_gpu.trace_add("write", lambda *_: (_on_gpu_layers_change(), self._update_command()))
 
         # Context size toggle and input.
         def _ctx_toggle_wrapper(*_):
-            if not self.config.ctx_size_enabled:
-                iv_ctx_enabled.set(True)
-            _on_ctx_enabled_change()
-            _update_command()
+            try:
+                if not self.config.ctx_size_enabled:
+                    iv_ctx_enabled.set(True)
+                _on_ctx_enabled_change()
+                self._update_command()
+            except Exception:
+                pass
         iv_ctx_enabled.trace_add("write", lambda *_: (_ctx_toggle_wrapper(),))
 
-        sv_host.trace_add("write", lambda *_: (_on_host_change(), _update_command()))
-        iv_port.trace_add("write", lambda *_: (_on_port_change(), _update_command()))
+        def _host_trace_wrapper(*_):
+            try:
+                val = sv_host.get() or "0.0.0.0"
+                self.config.host = val
+                self._update_command()
+            except Exception:
+                pass
+        sv_host.trace_add("write", lambda *_: (_on_host_change(), _host_trace_wrapper()))
+        def _port_trace_wrapper(*_):
+            try:
+                val = int(iv_port.get()) if iv_port.get() else 8080
+                self.config.port = max(1, min(val, 65535))
+                self._update_command()
+            except (ValueError, TypeError):
+                pass
+        iv_port.trace_add("write", lambda *_: (_on_port_change(), _port_trace_wrapper()))
 
         # Threads toggle and input.
         def _threads_toggle_wrapper(*_):
-            if not self.config.threads_enabled:
-                iv_threads_enabled.set(True)
-            _on_threads_enabled_change()
-            _update_command()
+            try:
+                if not self.config.threads_enabled:
+                    iv_threads_enabled.set(True)
+                _on_threads_enabled_change()
+                self._update_command()
+            except Exception:
+                pass
         iv_threads_enabled.trace_add("write", lambda *_: (_threads_toggle_wrapper(),))
 
 
@@ -426,11 +463,14 @@ class LlamaServerGUI:
         def _ctx_trace_wrapper(*_):
             self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
 
-        iv_ctx_enabled.trace_add("write", lambda *_: (_on_ctx_change(), _ctx_trace_wrapper(), _update_command()))
+        iv_ctx_enabled.trace_add("write", lambda *_: (_on_ctx_change(), _ctx_trace_wrapper(), self._update_command()))
         def _iv_ctx_var_trace(*_):
-            self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
-            _on_ctx_val()
-            _update_command()
+            try:
+                self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
+                _on_ctx_val()
+                self._update_command()
+            except Exception:
+                pass
 
         iv_ctx_var.trace_add("write", lambda *_: (_iv_ctx_var_trace(),))
 
@@ -447,12 +487,30 @@ class LlamaServerGUI:
         spinvar = tk.IntVar(value=-1)
 
         def _on_spinval(*_):
-            val = max(-1, min(int(spinvar.get()), 99)) if spinvar.get() else -1
-            spinvar.set(val)
-            self.config.n_gpu_layers = val
+            try:
+                val = int(spinvar.get())
+                if not (-1 <= val <= 99): return
+                self.config.n_gpu_layers = max(-1, min(val, 99))
+            except (ValueError, TypeError):
+                pass
 
-        iv_auto_gpu.trace_add("write", lambda *_: (spinvar.set(iv_auto_gpu.get()), _on_spinval(), _update_command()))
-        spinvar.trace_add("write", lambda *_: (_on_spinval(),))
+        def _gpu_trace_wrapper(*_):
+            try:
+                spinvar.set(int(iv_auto_gpu.get()))
+                self._update_command()
+            except Exception:
+                pass
+
+        iv_auto_gpu.trace_add("write", lambda *_: (_on_spinval(), _gpu_trace_wrapper()))
+        def _spinvar_safe(*_):
+            try:
+                val = int(spinvar.get())
+                if not (-1 <= val <= 99): return
+                self.config.n_gpu_layers = max(-1, min(val, 99))
+                spinvar.set(max(-1, min(val, 99)))
+            except (ValueError, TypeError):
+                pass
+        spinvar.trace_add("write", lambda *_: (_spinvar_safe(), self._update_command()))
 
         ttk.Spinbox(gpu_frame, from_=-1, to=99, textvariable=spinvar, width=5).pack(side="left")
 
@@ -517,10 +575,36 @@ class LlamaServerGUI:
         def _sampling_trace():
             self.config.sampling_params_enabled = bool(samp_toggle_var.get())
 
-        samp_toggle_var.trace_add(
-            "write",
-            lambda *_: (_on_sampling_params_toggle(), _sampling_trace(), _update_command()),
-        )
+        def _samp_wrapper(*_):
+            try:
+                enabled = bool(samp_toggle_var.get())
+                self.config.sampling_params_enabled = enabled
+                if enabled:
+                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
+                        w.pack(fill="x", pady=(2, 0))
+                else:
+                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
+                        w.pack_forget()
+                self._update_command()
+            except Exception:
+                pass
+        def _on_sampling_trace(*_):
+            try:
+                enabled = bool(samp_toggle_var.get())
+                self.config.sampling_params_enabled = enabled
+                if enabled and hasattr(self, '_update_command'):
+                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
+                        try: w.pack(fill="x", pady=(2, 0))
+                        except Exception: pass
+                elif not enabled and hasattr(self, '_update_command'):
+                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
+                        try: w.pack_forget()
+                        except Exception: pass
+                if hasattr(self, '_update_command'):
+                    self._update_command()
+            except Exception:
+                pass
+        samp_toggle_var.trace_add("write", lambda *_: (_on_sampling_trace(),))
 
         # --- Seed row ---
         sv_seed = tk.IntVar(value=-1)  # -1=auto.
@@ -530,12 +614,19 @@ class LlamaServerGUI:
         entry_s = ttk.Spinbox(seed_row, from_=-99999, to=99999, width=8, textvariable=sv_seed)
         entry_s.pack(side="left", padx=(4, 0))
 
-        def _on_seed_change(*_):
-            val = max(-1, int(sv_seed.get())) if sv_seed.get() else -1
-            sv_seed.set(val)
-            self.config.seed = val
-
-        sv_seed.trace_add("write", lambda *_: (_on_seed_change(), _update_command()))
+        def _seed_safe(*_):
+            try:
+                val = int(sv_seed.get())
+                if not (-99999 <= val <= 99999): return
+                self.config.seed = max(-1, min(val, 99999))
+                sv_seed.set(max(-1, min(val, 99999)))
+            except (ValueError, TypeError):
+                pass
+        def _seed_trace(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_seed.trace_add("write", lambda *_: (_seed_safe(), _seed_trace()))
 
         # --- Temperature row ---
         def make_temp_frame():
@@ -547,22 +638,27 @@ class LlamaServerGUI:
             # Scale slider (visual).
             scale_var = tk.DoubleVar(value=0.8)
 
-            def _on_scale(*_):
-                val = max(0.05, min(float(scale_var.get()), 2.0))
-                sv_temp.set(val)
-                self.config.temperature = val
-
-            def _on_entry(*_):
-                val = max(0.05, min(float(sv_temp.get()), 2.0)) if sv_temp.get() else 0.8
-                scale_var.set(val)
-                self.config.temperature = val
-
-            tk.Scale(temp_row, from_=0.05, to=2.0, orient="horizontal", length=140, resolution=0.05, variable=scale_var).pack(side="left")
-            entry_t = ttk.Entry(temp_row, textvariable=sv_temp, width=6)
-            entry_t.pack(side="left", padx=(4, 0))
-
-            scale_var.trace_add("write", lambda *_: (_on_scale(), _update_command()))
-            sv_temp.trace_add("write", lambda *_: (scale_var.set(sv_temp.get()), _on_entry(), _update_command()))
+            def _temp_safe(*_):
+                try:
+                    val = float(scale_var.get())
+                    if not 0.05 <= val <= 2.0: return
+                    sv_temp.set(max(0.05, min(val, 2.0)))
+                    self.config.temperature = max(0.05, min(val, 2.0))
+                except Exception:
+                    pass
+            def _temp_entry_safe(*_):
+                try:
+                    val = float(sv_temp.get()) if sv_temp.get() else 0.8
+                    scale_var.set(max(0.05, min(val, 2.0)))
+                    self.config.temperature = max(0.05, min(val, 2.0))
+                except Exception:
+                    pass
+            def _temp_cmd(*_):
+                try: self._update_command()
+                except Exception:
+                    pass
+            scale_var.trace_add("write", lambda *_: (_temp_safe(), _temp_entry_safe()))
+            sv_temp.trace_add("write", lambda *_: (_temp_entry_safe(),))
 
         make_temp_frame()
 
@@ -576,12 +672,19 @@ class LlamaServerGUI:
             entry_k = ttk.Spinbox(topk_row, from_=1, to=9999, width=8, textvariable=sv_topk)
             entry_k.pack(side="left", padx=(4, 0))
 
-            def _on_topk_change(*_):
-                val = max(1, int(sv_topk.get())) if sv_topk.get() else 40
-                sv_topk.set(val)
-                self.config.top_k = val
-
-            sv_topk.trace_add("write", lambda *_: (_on_topk_change(), _update_command()))
+            def _topk_safe(*_):
+                try:
+                    val = int(sv_topk.get())
+                    if not (1 <= val <= 9999): return
+                    self.config.top_k = max(1, min(val, 9999))
+                    sv_topk.set(max(1, min(val, 9999)))
+                except (ValueError, TypeError):
+                    pass
+            def _topk_cmd(*_):
+                try: self._update_command()
+                except Exception:
+                    pass
+            sv_topk.trace_add("write", lambda *_: (_topk_safe(), _topk_cmd()))
 
         make_topk_frame()
 
@@ -594,22 +697,26 @@ class LlamaServerGUI:
 
             scale_var = tk.DoubleVar(value=0.95)
 
-            def _on_scale(*_):
-                val = min(max(float(scale_var.get()), 0.05), 1.0)
-                sv_topp.set(val)
-                self.config.top_p = val
-
-            def _on_entry(*_):
-                val = min(max(float(sv_topp.get()), 0.05), 1.0) if sv_topp.get() else 0.95
-                scale_var.set(val)
-                self.config.top_p = val
-
-            tk.Scale(topp_row, from_=0.05, to=1.0, orient="horizontal", length=140, resolution=0.01, variable=scale_var).pack(side="left")
-            entry_tp = ttk.Entry(topp_row, textvariable=sv_topp, width=6)
-            entry_tp.pack(side="left", padx=(4, 0))
-
-            scale_var.trace_add("write", lambda *_: (_on_scale(), _update_command()))
-            sv_topp.trace_add("write", lambda *_: (scale_var.set(sv_topp.get()), _on_entry(), _update_command()))
+            def _topp_safe(*_):
+                try:
+                    val = float(scale_var.get()) if scale_var.get() else 0.95
+                    self.config.top_p = min(max(val, 0.05), 1.0)
+                    sv_topp.set(min(max(val, 0.05), 1.0))
+                except Exception:
+                    pass
+            def _topp_entry_safe(*_):
+                try:
+                    val = float(sv_topp.get()) if sv_topp.get() else 0.95
+                    scale_var.set(min(max(val, 0.05), 1.0))
+                    self.config.top_p = min(max(val, 0.05), 1.0)
+                except Exception:
+                    pass
+            def _topp_cmd(*_):
+                try: self._update_command()
+                except Exception:
+                    pass
+            scale_var.trace_add("write", lambda *_: (_topp_safe(),))
+            sv_topp.trace_add("write", lambda *_: (_topp_entry_safe()))
 
         make_topp_frame()
 
@@ -622,22 +729,26 @@ class LlamaServerGUI:
 
             scale_var = tk.DoubleVar(value=1.1)
 
-            def _on_scale(*_):
-                val = min(max(float(scale_var.get()), 1.0), 3.0)
-                sv_rp.set(val)
-                self.config.repeat_penalty = val
-
-            def _on_entry(*_):
-                val = min(max(float(sv_rp.get()), 1.0), 3.0) if sv_rp.get() else 1.1
-                scale_var.set(val)
-                self.config.repeat_penalty = val
-
-            tk.Scale(rp_row, from_=1.0, to=3.0, orient="horizontal", length=140, resolution=0.05, variable=scale_var).pack(side="left")
-            entry_rp = ttk.Entry(rp_row, textvariable=sv_rp, width=6)
-            entry_rp.pack(side="left", padx=(4, 0))
-
-            scale_var.trace_add("write", lambda *_: (_on_scale(), _update_command()))
-            sv_rp.trace_add("write", lambda *_: (scale_var.set(sv_rp.get()), _on_entry(), _update_command()))
+            def _rp_safe(*_):
+                try:
+                    val = float(scale_var.get()) if scale_var.get() else 1.1
+                    self.config.repeat_penalty = min(max(val, 1.0), 3.0)
+                    sv_rp.set(min(max(val, 1.0), 3.0))
+                except Exception:
+                    pass
+            def _rp_entry_safe(*_):
+                try:
+                    val = float(sv_rp.get()) if sv_rp.get() else 1.1
+                    scale_var.set(min(max(val, 1.0), 3.0))
+                    self.config.repeat_penalty = min(max(val, 1.0), 3.0)
+                except Exception:
+                    pass
+            def _rp_cmd(*_):
+                try: self._update_command()
+                except Exception:
+                    pass
+            scale_var.trace_add("write", lambda *_: (_rp_safe(),))
+            sv_rp.trace_add("write", lambda *_: (_rp_entry_safe()))
 
         make_rp_frame()
 
