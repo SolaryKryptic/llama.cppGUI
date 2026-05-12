@@ -30,10 +30,10 @@ class FlagConfig:
         self.num_threads = os.cpu_count() or 4   # dynamic default from machine CPU count.
         self.threads_enabled = False    # toggle to include -t/--threads in command.
 
-        self.sampling_params_enabled = False  # collapsible section; off by default.
-        self.seed = -1                  # -1 means auto (random) seed.
         self.temperature = 0.8          # sampling temperature.
+        self.min_p = 0.0                # minimum-p sampling value (0.0–1.0).
         self.top_k = 40                 # top-k sampling value.
+        self.presence_penalty = 0.0     # presence penalty factor (-2.0–2.0).
         self.top_p = 0.95               # nucleus sampling probability threshold.
         self.repeat_penalty = 1.1       # repeat penalty factor.
 
@@ -71,19 +71,20 @@ class FlagConfig:
             threads = max(1, min(int(str(self._safe_int("threads", 4))), 256))
             parts.append(f"-t {threads}")
 
-        # Sampling params — only included when the collapsible section is expanded.
-        if self.sampling_params_enabled:
-            seed_val = int(self.seed) if str(self.seed).strip() != "-1" else "auto"
-            temp = max(0.05, min(float(str(self.temperature)), 2.0))
-            topk = max(1, int(str(self.top_k)))
-            topp = min(max(float(str(self.top_p)), 0.05), 1.0)
-            rp = min(max(float(str(self.repeat_penalty)), 1.0), 3.0)
+        # Sampling params (always included).
+        temp = max(0.05, min(float(str(self.temperature)), 2.0))
+        minp = min(max(float(str(self.min_p)), -1.0), 1.0)
+        topk = max(1, int(str(self.top_k)))
+        pp = min(max(float(str(self.presence_penalty)), -2.0), 2.0)
+        topp = min(max(float(str(self.top_p)), 0.05), 1.0)
+        rp = min(max(float(str(self.repeat_penalty)), 1.0), 3.0)
 
-            parts.append(f"--seed {seed_val}")
-            parts.append(f"--temp {temp:.2f}")
-            parts.append(f"--top-k {topk}")
-            parts.append(f"--top-p {topp:.3f}")
-            parts.append(f"--repeat-penalty {rp:.2f}")
+        parts.append(f"--temp {temp:.2f}")
+        parts.append(f"--min-p {minp:.2f}")
+        parts.append(f"--top-k {topk}")
+        parts.append(f"--presence-penalty {pp:.2f}")
+        parts.append(f"--top-p {topp:.3f}")
+        parts.append(f"--repeat-penalty {rp:.2f}")
 
         return " \\\n    ".join(parts)
 
@@ -123,8 +124,6 @@ class LlamaServerGUI:
         iv_threads_enabled = tk.BooleanVar(value=False)           # toggle to show threads input.
         iv_threads_val = tk.IntVar(value=os.cpu_count() or 4)     # thread count default from CPU cores.
 
-        sv_sampling_enabled = tk.BooleanVar(value=False)          # collapsible sampling section visibility flag.
-        sv_seed = tk.IntVar(value=-1)                             # seed (-1=auto, any int for fixed seed).
         sv_temp = tk.DoubleVar(value=0.8)                         # temperature (float 0.05–2.0).
         sv_topk = tk.IntVar(value=40)                              # top-k integer value >= 1.
         sv_topp = tk.DoubleVar(value=0.95)                        # top-p float between [0.05, 1.0].
@@ -140,8 +139,6 @@ class LlamaServerGUI:
             "port": iv_port,
             "threads_enabled": iv_threads_enabled,
             "num_threads": iv_threads_val,
-            "sampling_params_enabled": sv_sampling_enabled,
-            "seed": sv_seed,
             "temperature": sv_temp,
             "top_k": sv_topk,
             "top_p": sv_topp,
@@ -159,8 +156,6 @@ class LlamaServerGUI:
             "port": iv_port,
             "threads_enabled": iv_threads_enabled,
             "num_threads": iv_threads_val,
-            "sampling_params_enabled": sv_sampling_enabled,
-            "seed": sv_seed,
             "temperature": sv_temp,
             "top_k": sv_topk,
             "top_p": sv_topp,
@@ -350,10 +345,24 @@ class LlamaServerGUI:
                     self.canvas.itemconfigure(scroll_content_id, width=w - 15)
                     self.canvas.config(height=h)
                 except Exception: pass
+                # Grow the command text box height with the window.
+                if hasattr(self, 'cmd_text'):
+                    try:
+                        new_h = max(5, int((h - 200) / 18))  # ~18px per line, reserve 200 for other UI
+                        self.cmd_text.configure(height=new_h)
+                    except Exception: pass
         
         outer_frame.bind("<Configure>", _on_window_resize)
         root.grid_rowconfigure(0, weight=1)
         root.grid_columnconfigure(0, weight=1)
+
+        # Copy button placed outside the scrollable canvas so it's always visible.
+        copy_frame = ttk.Frame(outer_frame)
+        copy_frame.grid(row=2, column=0, sticky="ew")
+        self._copy_btn = ttk.Button(
+            copy_frame, text="\U0001F4CB Copy", command=self._copy_command
+        )
+        self._copy_btn.pack(side="right")
 
         self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.pack(side="left", fill="both", expand=True, pady=(0, 4))
@@ -392,14 +401,7 @@ class LlamaServerGUI:
         cmd_scrollbar.pack(side="right", fill="y")
         self.cmd_text.configure(yscrollcommand=cmd_scrollbar.set)
 
-        # Copy button row below text.
-        btn_frame = ttk.Frame(cmd_frame)
-        btn_frame.pack(fill="both", pady=(4, 2))
 
-        copy_btn = ttk.Button(
-            btn_frame, text="\U0001F4CB Copy", command=self._copy_command
-        )
-        copy_btn.pack(side="right")
 
         # Initial command render on startup (before any user interaction).
         self._update_command()
@@ -588,206 +590,118 @@ class LlamaServerGUI:
 
 
     def _section_sampling_params(self, parent):
-        """Sampling parameters section (collapsible via checkbox)."""
-        samp_toggle_var = self._tk["sampling_params_enabled"]
+        """Sampling parameters section (always visible, 2-column grid)."""
+        samp_frame = ttk.Frame(parent)
+        samp_frame.pack(fill="both", padx=6, pady=4)
 
-        # Collapsible toggle at top.
-        ttk.Checkbutton(parent, text="Show Sampling Parameters", variable=samp_toggle_var).pack(fill="x")
-
-        # Container frame for sampling inputs — shown/hidden by the toggle trace.
-        self.samp_frame = samp_frame = ttk.Frame(parent)
-
-        def _on_sampling_params_toggle():
-            enabled = bool(samp_toggle_var.get())
-            self.config.sampling_params_enabled = enabled
-            if enabled:
-                # Pack all child widgets back in.
-                for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                    w.pack(fill="both", pady=(2, 0))
-            else:
-                # Hide all child widgets.
-                for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                    w.pack_forget()
-
-        def _sampling_trace():
-            self.config.sampling_params_enabled = bool(samp_toggle_var.get())
-
-        def _samp_wrapper(*_):
+        # --- Temperature (row 0, col 0) ---
+        sv_temp = tk.DoubleVar(value=0.8)
+        def _temp_safe(*_):
             try:
-                enabled = bool(samp_toggle_var.get())
-                self.config.sampling_params_enabled = enabled
-                if enabled:
-                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                        w.pack(fill="both", pady=(2, 0))
-                else:
-                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                        w.pack_forget()
-                self._update_command()
+                val = float(sv_temp.get()) if sv_temp.get() else 0.8
+                self.config.temperature = max(0.05, min(val, 2.0))
+                sv_temp.set(max(0.05, min(val, 2.0)))
             except Exception:
                 pass
-        def _on_sampling_trace(*_):
-            try:
-                enabled = bool(samp_toggle_var.get())
-                self.config.sampling_params_enabled = enabled
-                if enabled and hasattr(self, '_update_command'):
-                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                        try: w.pack(fill="both", pady=(2, 0))
-                        except Exception: pass
-                elif not enabled and hasattr(self, '_update_command'):
-                    for w in [self._samp_seed_row, self._samp_temp_row, self._samp_topk_frame, self._samp_topp_frame, self._samp_rp_frame]:
-                        try: w.pack_forget()
-                        except Exception: pass
-                if hasattr(self, '_update_command'):
-                    self._update_command()
-            except Exception:
-                pass
-        samp_toggle_var.trace_add("write", lambda *_: (_on_sampling_trace(),))
-
-        # --- Seed row ---
-        sv_seed = tk.IntVar(value=-1)  # -1=auto.
-        seed_row = ttk.Frame(samp_frame)
-        self._samp_seed_row = seed_row
-        ttk.Label(seed_row, text="Seed").pack(side="left")
-        entry_s = ttk.Spinbox(seed_row, from_=-99999, to=99999, width=8, textvariable=sv_seed)
-        entry_s.pack(side="left", padx=(4, 0))
-
-        def _seed_safe(*_):
-            try:
-                val = int(sv_seed.get())
-                if not (-99999 <= val <= 99999): return
-                self.config.seed = max(-1, min(val, 99999))
-                sv_seed.set(max(-1, min(val, 99999)))
-            except (ValueError, TypeError):
-                pass
-        def _seed_trace(*_):
+        def _temp_cmd(*_):
             try: self._update_command()
             except Exception:
                 pass
-        sv_seed.trace_add("write", lambda *_: (_seed_safe(), _seed_trace()))
+        sv_temp.trace_add("write", lambda *_: (_temp_safe(), _temp_cmd()))
+        ttk.Label(samp_frame, text="Temperature").grid(row=0, column=0, sticky="w", padx=(4, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=0.05, to=2.0, increment=0.05, width=8,
+                    textvariable=sv_temp).grid(row=0, column=0, sticky="w", padx=(100, 0), pady=1)
 
-        # --- Temperature row ---
-        def make_temp_frame():
-            temp_row = ttk.Frame(samp_frame)
-            self._samp_temp_row = temp_row
-            tk.Label(temp_row, text="Temperature").pack(side="left")
-            sv_temp = tk.DoubleVar(value=0.8)
+        # --- Min-P (row 0, col 1) ---
+        sv_minp = tk.DoubleVar(value=0.0)
+        def _minp_safe(*_):
+            try:
+                val = float(sv_minp.get()) if sv_minp.get() else 0.0
+                self.config.min_p = min(max(val, -1.0), 1.0)
+                sv_minp.set(min(max(val, -1.0), 1.0))
+            except Exception:
+                pass
+        def _minp_cmd(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_minp.trace_add("write", lambda *_: (_minp_safe(), _minp_cmd()))
+        ttk.Label(samp_frame, text="Min-P").grid(row=0, column=1, sticky="w", padx=(40, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=-1.0, to=1.0, increment=0.01, width=8,
+                    textvariable=sv_minp).grid(row=0, column=1, sticky="w", padx=(140, 0), pady=1)
 
-            # Scale slider (visual).
-            scale_var = tk.DoubleVar(value=0.8)
+        # --- Top-K (row 1, col 0) ---
+        sv_topk = tk.IntVar(value=40)
+        def _topk_safe(*_):
+            try:
+                val = int(sv_topk.get())
+                if not (1 <= val <= 9999): return
+                self.config.top_k = max(1, min(val, 9999))
+                sv_topk.set(max(1, min(val, 9999)))
+            except (ValueError, TypeError):
+                pass
+        def _topk_cmd(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_topk.trace_add("write", lambda *_: (_topk_safe(), _topk_cmd()))
+        ttk.Label(samp_frame, text="Top-K").grid(row=1, column=0, sticky="w", padx=(4, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=1, to=9999, increment=1, width=8,
+                    textvariable=sv_topk).grid(row=1, column=0, sticky="w", padx=(100, 0), pady=1)
 
-            def _temp_safe(*_):
-                try:
-                    val = float(scale_var.get())
-                    if not 0.05 <= val <= 2.0: return
-                    sv_temp.set(max(0.05, min(val, 2.0)))
-                    self.config.temperature = max(0.05, min(val, 2.0))
-                except Exception:
-                    pass
-            def _temp_entry_safe(*_):
-                try:
-                    val = float(sv_temp.get()) if sv_temp.get() else 0.8
-                    scale_var.set(max(0.05, min(val, 2.0)))
-                    self.config.temperature = max(0.05, min(val, 2.0))
-                except Exception:
-                    pass
-            def _temp_cmd(*_):
-                try: self._update_command()
-                except Exception:
-                    pass
-            scale_var.trace_add("write", lambda *_: (_temp_safe(), _temp_entry_safe()))
-            sv_temp.trace_add("write", lambda *_: (_temp_entry_safe(),))
+        # --- Presence Penalty (row 1, col 1) ---
+        sv_pp = tk.DoubleVar(value=0.0)
+        def _pp_safe(*_):
+            try:
+                val = float(sv_pp.get()) if sv_pp.get() else 0.0
+                self.config.presence_penalty = min(max(val, -2.0), 2.0)
+                sv_pp.set(min(max(val, -2.0), 2.0))
+            except Exception:
+                pass
+        def _pp_cmd(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_pp.trace_add("write", lambda *_: (_pp_safe(), _pp_cmd()))
+        ttk.Label(samp_frame, text="Presence Pen.").grid(row=1, column=1, sticky="w", padx=(40, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=-2.0, to=2.0, increment=0.1, width=8,
+                    textvariable=sv_pp).grid(row=1, column=1, sticky="w", padx=(160, 0), pady=1)
 
-        make_temp_frame()
+        # --- Top-P (row 2, col 0) ---
+        sv_topp = tk.DoubleVar(value=0.95)
+        def _topp_safe(*_):
+            try:
+                val = float(sv_topp.get()) if sv_topp.get() else 0.95
+                self.config.top_p = min(max(val, 0.05), 1.0)
+                sv_topp.set(min(max(val, 0.05), 1.0))
+            except Exception:
+                pass
+        def _topp_cmd(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_topp.trace_add("write", lambda *_: (_topp_safe(), _topp_cmd()))
+        ttk.Label(samp_frame, text="Top-P").grid(row=2, column=0, sticky="w", padx=(4, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=0.05, to=1.0, increment=0.05, width=8,
+                    textvariable=sv_topp).grid(row=2, column=0, sticky="w", padx=(100, 0), pady=1)
 
-        # --- Top-K row ---
-        def make_topk_frame():
-            topk_row = ttk.Frame(samp_frame)
-            self._samp_topk_frame = topk_row
-            tk.Label(topk_row, text="Top-K").pack(side="left")
-            sv_topk = tk.IntVar(value=40)
-
-            entry_k = ttk.Spinbox(topk_row, from_=1, to=9999, width=8, textvariable=sv_topk)
-            entry_k.pack(side="left", padx=(4, 0))
-
-            def _topk_safe(*_):
-                try:
-                    val = int(sv_topk.get())
-                    if not (1 <= val <= 9999): return
-                    self.config.top_k = max(1, min(val, 9999))
-                    sv_topk.set(max(1, min(val, 9999)))
-                except (ValueError, TypeError):
-                    pass
-            def _topk_cmd(*_):
-                try: self._update_command()
-                except Exception:
-                    pass
-            sv_topk.trace_add("write", lambda *_: (_topk_safe(), _topk_cmd()))
-
-        make_topk_frame()
-
-        # --- Top-P row ---
-        def make_topp_frame():
-            topp_row = ttk.Frame(samp_frame)
-            self._samp_topp_frame = topp_row
-            tk.Label(topp_row, text="Top-P").pack(side="left")
-            sv_topp = tk.DoubleVar(value=0.95)
-
-            scale_var = tk.DoubleVar(value=0.95)
-
-            def _topp_safe(*_):
-                try:
-                    val = float(scale_var.get()) if scale_var.get() else 0.95
-                    self.config.top_p = min(max(val, 0.05), 1.0)
-                    sv_topp.set(min(max(val, 0.05), 1.0))
-                except Exception:
-                    pass
-            def _topp_entry_safe(*_):
-                try:
-                    val = float(sv_topp.get()) if sv_topp.get() else 0.95
-                    scale_var.set(min(max(val, 0.05), 1.0))
-                    self.config.top_p = min(max(val, 0.05), 1.0)
-                except Exception:
-                    pass
-            def _topp_cmd(*_):
-                try: self._update_command()
-                except Exception:
-                    pass
-            scale_var.trace_add("write", lambda *_: (_topp_safe(),))
-            sv_topp.trace_add("write", lambda *_: (_topp_entry_safe()))
-
-        make_topp_frame()
-
-        # --- Repeat Penalty row ---
-        def make_rp_frame():
-            rp_row = ttk.Frame(samp_frame)
-            self._samp_rp_frame = rp_row
-            tk.Label(rp_row, text="Repeat Pen.").pack(side="left")
-            sv_rp = tk.DoubleVar(value=1.1)
-
-            scale_var = tk.DoubleVar(value=1.1)
-
-            def _rp_safe(*_):
-                try:
-                    val = float(scale_var.get()) if scale_var.get() else 1.1
-                    self.config.repeat_penalty = min(max(val, 1.0), 3.0)
-                    sv_rp.set(min(max(val, 1.0), 3.0))
-                except Exception:
-                    pass
-            def _rp_entry_safe(*_):
-                try:
-                    val = float(sv_rp.get()) if sv_rp.get() else 1.1
-                    scale_var.set(min(max(val, 1.0), 3.0))
-                    self.config.repeat_penalty = min(max(val, 1.0), 3.0)
-                except Exception:
-                    pass
-            def _rp_cmd(*_):
-                try: self._update_command()
-                except Exception:
-                    pass
-            scale_var.trace_add("write", lambda *_: (_rp_safe(),))
-            sv_rp.trace_add("write", lambda *_: (_rp_entry_safe()))
-
-        make_rp_frame()
+        # --- Repeat Penalty (row 2, col 1) ---
+        sv_rp = tk.DoubleVar(value=1.1)
+        def _rp_safe(*_):
+            try:
+                val = float(sv_rp.get()) if sv_rp.get() else 1.1
+                self.config.repeat_penalty = min(max(val, 1.0), 3.0)
+                sv_rp.set(min(max(val, 1.0), 3.0))
+            except Exception:
+                pass
+        def _rp_cmd(*_):
+            try: self._update_command()
+            except Exception:
+                pass
+        sv_rp.trace_add("write", lambda *_: (_rp_safe(), _rp_cmd()))
+        ttk.Label(samp_frame, text="Repeat Pen.").grid(row=2, column=1, sticky="w", padx=(40, 0), pady=1)
+        ttk.Spinbox(samp_frame, from_=1.0, to=3.0, increment=0.1, width=8,
+                    textvariable=sv_rp).grid(row=2, column=1, sticky="w", padx=(150, 0), pady=1)
 
 
 # ---------------------------------------------------------------------------
