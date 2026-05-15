@@ -937,15 +937,83 @@ class LlamaServerGUI:
         self.root.clipboard_append(cmd)
 
     def _save_bat_command(self):
-        """Prompt user to choose a folder and save the command as a .bat file."""
+        """Prompt user to choose a folder, name the file, and save the command as a .bat file."""
         cmd = self.config.generate_command()
-        folder = filedialog.askdirectory(title="Select Folder to Save .bat File")
-        if not folder:
-            return
-        # Use a descriptive name based on the model path (or a default).
+
+        # Default filename based on the model path.
         model_name = os.path.basename(self.config.model_path) if self.config.model_path else "llama-server"
-        filename = model_name + ".bat"
-        filepath = os.path.join(folder, filename)
+        default_name = model_name + ".bat"
+
+        # Dialog to pick folder and enter filename.
+        dialog = Toplevel(self.root)
+        dialog.title("Save as .bat")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center dialog on parent.
+        dialog.update_idletasks()
+        pw = dialog.winfo_parent()
+        if pw:
+            dialog.geometry(f"+{self.root.winfo_x() + (self.root.winfo_width() - 300) // 2}+{self.root.winfo_y() + (self.root.winfo_height() - 140) // 2}")
+
+        sv_folder = tk.StringVar(value=os.path.expanduser("~"))
+        sv_filename = tk.StringVar(value=default_name)
+        result = {"folder": None, "filename": None}
+
+        def _browse_folder():
+            d = filedialog.askdirectory(title="Select Folder")
+            if d:
+                sv_folder.set(d)
+
+        def _ok():
+            folder = sv_folder.get().strip()
+            fname = sv_filename.get().strip()
+            if not folder or not fname:
+                messagebox.showwarning("Input", "Please enter both a folder and a filename.")
+                return
+            if not fname.lower().endswith(".bat"):
+                fname += ".bat"
+            result["folder"] = folder
+            result["filename"] = fname
+            dialog.destroy()
+
+        def _cancel():
+            result["folder"] = None
+            dialog.destroy()
+
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+
+        # Folder row.
+        row = ttk.Frame(body)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Folder:").pack(side="left")
+        ttk.Entry(row, textvariable=sv_folder, width=35).pack(side="left", fill="x", expand=True, padx=(4, 4))
+        ttk.Button(row, text="Browse...", command=_browse_folder).pack(side="left")
+
+        # Filename row.
+        row = ttk.Frame(body)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Filename:").pack(side="left")
+        ttk.Entry(row, textvariable=sv_filename, width=35).pack(side="left", fill="x", expand=True, padx=(4, 4))
+
+        # Buttons.
+        btn_row = ttk.Frame(body)
+        btn_row.pack(fill="x", pady=(8, 0))
+        ttk.Button(btn_row, text="Save", command=_ok).pack(side="right", padx=(4, 0))
+        ttk.Button(btn_row, text="Cancel", command=_cancel).pack(side="right")
+
+        # Focus on filename field.
+        sv_filename_entry = body.winfo_children()[-2].winfo_children()[1]
+        sv_filename_entry.focus_set()
+        sv_filename_entry.select_range(0, "end")
+
+        dialog.wait_window()
+
+        if not result["folder"] or not result["filename"]:
+            return
+
+        filepath = os.path.join(result["folder"], result["filename"])
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write("@echo off\n")
