@@ -5,9 +5,37 @@ Uses ttk widgets with the 'clam' theme (available on Windows 10/11).
 """
 
 import os
+import json
 from tkinter import filedialog, messagebox, Tk, Toplevel, StringVar
 import tkinter as tk
 from tkinter import ttk
+
+_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".llama_server_gui.json")
+
+def _load_last_folder():
+    """Return the previously saved destination folder, or empty string."""
+    try:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("last_folder", "")
+    except Exception:
+        return ""
+
+def _save_last_folder(folder):
+    """Persist the given folder path for future sessions."""
+    try:
+        data = {}
+        if os.path.exists(_CONFIG_PATH):
+            try:
+                with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data["last_folder"] = folder
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +159,7 @@ class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
         self.config = FlagConfig()
+        self._last_folder = _load_last_folder()
 
         # Create all Tk variables (StringVar / IntVar) so every widget change triggers live updates.
         sv_model_path = tk.StringVar(value="")                    # model path display var.
@@ -956,7 +985,7 @@ class LlamaServerGUI:
         if pw:
             dialog.geometry(f"+{self.root.winfo_x() + (self.root.winfo_width() - 300) // 2}+{self.root.winfo_y() + (self.root.winfo_height() - 140) // 2}")
 
-        sv_folder = tk.StringVar(value=os.path.expanduser("~"))
+        sv_folder = tk.StringVar(value=self._last_folder or os.path.expanduser("~"))
         sv_filename = tk.StringVar(value=default_name)
         result = {"folder": None, "filename": None}
 
@@ -964,6 +993,7 @@ class LlamaServerGUI:
             d = filedialog.askdirectory(title="Select Folder")
             if d:
                 sv_folder.set(d)
+                self._last_folder = d
 
         def _ok():
             folder = sv_folder.get().strip()
@@ -1019,6 +1049,7 @@ class LlamaServerGUI:
                 f.write("@echo off\n")
                 f.write(f'"{cmd}"\n')
                 f.write("pause\n")
+            _save_last_folder(result["folder"])
             messagebox.showinfo("Saved", f"Saved as:\n{filepath}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not save file:\n{e}")
