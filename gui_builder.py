@@ -66,6 +66,7 @@ class FlagConfig:
         self.batch_size = 2048           # batch size for KV cache (-b), range 1–8192
         self.micro_batch_size = 512      # micro batch size for memory splitting (-ub), range 1–8192
         self.threads = -1                # thread count (-t), -1 means auto-detect
+        self.thread_batch = 0              # thread-batch (-tb), 0 means unset
 
         self.cache_type_k = "f16"       # KV cache type K, options: f16, f32, q8_0, q4_0, q4_1, iq4_nl
         self.cache_type_v = "f16"       # KV cache type V, same options
@@ -106,6 +107,10 @@ class FlagConfig:
         parts.append(f" -ub {self.micro_batch_size}")
         if self.threads != -1:
             parts.append(f" -t {self.threads}")
+
+        # Thread batch (only when set to non-zero)
+        if self.thread_batch > 0:
+            parts.append(f" -tb {self.thread_batch}")
 
         # Cache types are always included
         parts.append(f" -ctk {self.cache_type_k}")
@@ -166,6 +171,7 @@ class FlagConfig:
             "batch_size": self.batch_size,
             "micro_batch_size": self.micro_batch_size,
             "threads": self.threads,
+            "thread_batch": self.thread_batch,
             "cache_type_k": self.cache_type_k,
             "cache_type_v": self.cache_type_v,
             "temperature": self.temperature,
@@ -214,6 +220,7 @@ class LlamaServerGUI:
         iv_batch_size = tk.IntVar(value=2048)
         iv_micro_batch = tk.IntVar(value=512)
         iv_threads_val_new = tk.IntVar(value=-1)
+        iv_thread_batch = tk.IntVar(value=0)
 
         # Cache type K and V dropdowns
         CACHE_TYPES = ["f16", "f32", "q8_0", "q4_0", "q4_1", "iq4_nl"]
@@ -242,6 +249,7 @@ class LlamaServerGUI:
             "batch_size": iv_batch_size,
             "micro_batch": iv_micro_batch,
             "threads_val": iv_threads_val_new,
+            "thread_batch": iv_thread_batch,
             "cache_type_k": sv_cache_k,
             "cache_type_v": sv_cache_v,
             "host": sv_host,
@@ -266,6 +274,7 @@ class LlamaServerGUI:
             "batch_size": iv_batch_size,
             "micro_batch": iv_micro_batch,
             "threads_val": iv_threads_val_new,
+            "thread_batch": iv_thread_batch,
             "cache_type_k": sv_cache_k,
             "cache_type_v": sv_cache_v,
             "host": sv_host,
@@ -841,6 +850,14 @@ class LlamaServerGUI:
             except (ValueError, TypeError):
                 pass
 
+        def _on_thread_batch_change(*_):
+            try:
+                val = int(iv_thread_batch.get())
+                if not (-1 <= val <= 512): return
+                self.config.thread_batch = max(-1, min(val, 512))
+            except (ValueError, TypeError):
+                pass
+
         # --- Flash Attention and Fit On checkboxes (row 1, full width) ---
         fa_row = ttk.Frame(frame)
         fa_row.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
@@ -857,6 +874,7 @@ class LlamaServerGUI:
         iv_batch_size = self._tk["batch_size"]
         iv_micro_batch = self._tk["micro_batch"]
         iv_threads_val_new = self._tk["threads_val"]
+        iv_thread_batch = self._tk["thread_batch"]
 
         def _make_spinbox_factory(var, label, lo, hi, on_change):
             def _spin_safe(s):
@@ -881,6 +899,7 @@ class LlamaServerGUI:
             (iv_batch_size, "Batch Size", 1, 8192, _on_batch_size_change),
             (iv_micro_batch, "Micro-Batch", 1, 8192, _on_micro_batch_change),
             (iv_threads_val_new, "Threads", -1, 128, _on_threads_new_change),
+            (iv_thread_batch, "Thread Batch", 0, 512, _on_thread_batch_change),
         ]:
             col = ttk.Frame(mb_row)
             col.pack(side="left", padx=(0, 12))
