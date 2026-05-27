@@ -83,7 +83,7 @@ class FlagConfig:
 
     def generate_command(self):
         """Build the full llama-server CLI command string from current state."""
-        parts = ["llama-server.exe"]
+        parts = ["llama-server.exe -lv 4"]
 
         model_path = self.model_path.strip()
         if model_path:
@@ -103,7 +103,7 @@ class FlagConfig:
         if self.flash_attention:
             parts.append(" -fa on")
         if self.fit_on:
-            parts.append(" --fit-on")
+            parts.append(" --fit on")
 
         # Batch size, micro batch size, and threads are included when set, with -t skipped for -1
         parts.append(f" -b {self.batch_size}")
@@ -1299,8 +1299,9 @@ class LlamaServerGUI:
         self.root.clipboard_append(cmd)
         try:
             subprocess.Popen(
-                ["cmd.exe", "/k", cmd],
+                f'cmd.exe /k "{cmd}"',
                 creationflags=subprocess.DETACHED_PROCESS,
+                shell=True,
             )
         except Exception as e:
             messagebox.showerror("Error", f"Could not run command:\n{e}")
