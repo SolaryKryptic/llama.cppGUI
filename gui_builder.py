@@ -10,6 +10,7 @@ import subprocess
 from tkinter import filedialog, messagebox, Tk, Toplevel, StringVar
 import tkinter as tk
 from tkinter import ttk
+from hardwarescanner import scan_hardware
 
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".llama_server_gui.json")
 
@@ -313,6 +314,12 @@ class LlamaServerGUI:
         self._restore_vars(saved_flags)
         print(f"DEBUG after restore spec_type={self.config.spec_type!r}", file=_sys2.stderr)
 
+        # Scan hardware info for display (read-only, not saved to config)
+        try:
+            self._hw = scan_hardware()
+        except Exception:
+            self._hw = {"CPU": "Unknown", "GPU": "Unknown", "VRAM": "Unknown", "RAM": "Unknown"}
+
         # Change handlers — update config state and trigger command rebuild
         def _on_no_mmap_change(*_):
             try:
@@ -337,10 +344,11 @@ class LlamaServerGUI:
 
         def _on_gpu_layers_change(*_):
             try:
-                val = int(iv_auto_gpu.get())
+                raw = iv_auto_gpu.get()
+                val = int(raw) if raw else -1
                 if not (-1 <= val <= 99): return
                 self.config.n_gpu_layers = val
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_ctx_enabled_change(*_):
@@ -360,23 +368,26 @@ class LlamaServerGUI:
 
         def _on_batch_size_change(*_):
             try:
-                val = int(iv_batch_size.get())
+                raw = iv_batch_size.get()
+                val = int(raw) if raw else 2048
                 self.config.batch_size = max(1, min(val, 8192))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_micro_batch_change(*_):
             try:
-                val = int(iv_micro_batch.get())
+                raw = iv_micro_batch.get()
+                val = int(raw) if raw else 512
                 self.config.micro_batch_size = max(1, min(val, 8192))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_threads_new_change(*_):
             try:
-                val = int(iv_threads_val_new.get())
+                raw = iv_threads_val_new.get()
+                val = int(raw) if raw else -1
                 self.config.threads = max(-1, min(val, 128))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_cache_k_change(*_):
@@ -400,9 +411,10 @@ class LlamaServerGUI:
 
         def _on_port_change(*_):
             try:
-                val = int(iv_port.get()) if iv_port.get() else 8080
+                raw = iv_port.get()
+                val = int(raw) if raw else 8080
                 self.config.port = max(1, min(val, 65535))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
             self._update_command()
 
@@ -411,10 +423,11 @@ class LlamaServerGUI:
 
         def _on_num_threads_change(*_):
             try:
-                val = int(iv_threads_val.get())
+                raw = iv_threads_val.get()
+                val = int(raw) if raw else os.cpu_count() or 4
                 if not (1 <= val <= 256): return
                 self.config.num_threads = max(1, min(val, 256))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
 
@@ -445,10 +458,11 @@ class LlamaServerGUI:
         sv_host.trace_add("write", lambda *_: (_on_host_change(), _host_trace_wrapper()))
         def _port_trace_wrapper(*_):
             try:
-                val = int(iv_port.get()) if iv_port.get() else 8080
+                raw = iv_port.get()
+                val = int(raw) if raw else 8080
                 self.config.port = max(1, min(val, 65535))
                 self._update_command()
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
         iv_port.trace_add("write", lambda *_: (_on_port_change(), _port_trace_wrapper()))
 
@@ -702,6 +716,7 @@ class LlamaServerGUI:
         root.bind_all("<MouseWheel>", lambda e: _on_mousewheel(e))
 
         # Build each section into the scrollable frame in order
+        self._section_hardware_info(self.scrollable)
         self._section_model_loading(self.scrollable)
         self._section_context_gpu(self.scrollable)
         self._section_server_settings(self.scrollable)
@@ -800,10 +815,14 @@ class LlamaServerGUI:
         iv_ctx_var = tk.IntVar(value=512)
 
         def _on_ctx_val(*_):
-            val = max(2, min(int(iv_ctx_var.get()), 999999999)) if iv_ctx_var.get() else 512
-            iv_ctx_var.set(val)
-            self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
-            self.config.ctx_size_value = val
+            try:
+                raw = iv_ctx_var.get()
+                val = max(2, min(int(raw), 999999999)) if raw else 512
+                iv_ctx_var.set(val)
+                self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
+                self.config.ctx_size_value = val
+            except (ValueError, TypeError, tk.TclError):
+                pass
 
         ctx_label = ttk.Label(ctx_frame, text="Ctx Size")
         entry_c = ttk.Entry(ctx_frame, textvariable=iv_ctx_var, width=8)
@@ -815,10 +834,11 @@ class LlamaServerGUI:
 
         def _ctx_value_trace(*_):
             try:
-                val = max(2, min(int(iv_ctx_var.get()), 999999999)) if iv_ctx_var.get() else 512
+                raw = iv_ctx_var.get()
+                val = max(2, min(int(raw), 999999999)) if raw else 512
                 self.config.ctx_size_value = val
                 self.config.ctx_size_enabled = bool(iv_ctx_enabled.get())
-            except Exception:
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         iv_ctx_enabled.trace_add("write", lambda *_: (_on_ctx_change(), _ctx_trace_wrapper(), _ctx_value_trace(), self._update_command()))
@@ -838,15 +858,18 @@ class LlamaServerGUI:
 
         def _on_spinval(*_):
             try:
-                val = int(spinvar.get())
+                raw = spinvar.get()
+                val = int(raw) if raw else -1
                 if not (-1 <= val <= 99): return
                 self.config.n_gpu_layers = max(-1, min(val, 99))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _gpu_trace_wrapper(*_):
             try:
-                spinvar.set(int(iv_auto_gpu.get()))
+                raw = iv_auto_gpu.get()
+                v = int(raw) if raw else -1
+                spinvar.set(v)
                 self._update_command()
             except Exception:
                 pass
@@ -855,12 +878,13 @@ class LlamaServerGUI:
 
         def _spinvar_safe(*_):
             try:
-                val = int(spinvar.get())
+                raw = spinvar.get()
+                val = int(raw) if raw else -1
                 if not (-1 <= val <= 99): return
                 self.config.n_gpu_layers = max(-1, min(val, 99))
                 iv_auto_gpu.set(max(-1, min(val, 99)))
                 spinvar.set(max(-1, min(val, 99)))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         spinvar.trace_add("write", lambda *_: (_spinvar_safe(), _on_gpu_layers_change(), self._update_command()))
@@ -870,31 +894,35 @@ class LlamaServerGUI:
         # Batch size, micro batch, and thread handlers local to this section
         def _on_batch_size_change(*_):
             try:
-                val = int(iv_batch_size.get())
+                raw = iv_batch_size.get()
+                val = int(raw) if raw else 2048
                 self.config.batch_size = max(1, min(val, 8192))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_micro_batch_change(*_):
             try:
-                val = int(iv_micro_batch.get())
+                raw = iv_micro_batch.get()
+                val = int(raw) if raw else 512
                 self.config.micro_batch_size = max(1, min(val, 8192))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_threads_new_change(*_):
             try:
-                val = int(iv_threads_val_new.get())
+                raw = iv_threads_val_new.get()
+                val = int(raw) if raw else -1
                 self.config.threads = max(-1, min(val, 128))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         def _on_thread_batch_change(*_):
             try:
-                val = int(iv_thread_batch.get())
-                if not (-1 <= val <= 512): return
-                self.config.thread_batch = max(-1, min(val, 512))
-            except (ValueError, TypeError):
+                raw = iv_thread_batch.get()
+                val = int(raw) if raw else 0
+                if not (0 <= val <= 512): return
+                self.config.thread_batch = max(0, min(val, 512))
+            except (ValueError, TypeError, tk.TclError):
                 pass
 
         # --- Flash Attention and Fit On checkboxes (row 1, full width) ---
@@ -947,11 +975,12 @@ class LlamaServerGUI:
             def _spin_safe(s):
                 def _inner(*_):
                     try:
-                        val = int(s.get())
+                        raw = s.get()
+                        val = int(raw) if raw else lo
                         if not (lo <= val <= hi): return
                         var.set(max(lo, min(val, hi)))
                         s.set(max(lo, min(val, hi)))
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, tk.TclError):
                         pass
                 return _inner
             def _spin_cmd(s):
@@ -1014,21 +1043,26 @@ class LlamaServerGUI:
         entry_h.pack(side="left")
 
         def _on_port_change(*_):
-            val = max(1, min(int(iv_port.get()), 65535)) if iv_port.get() else 8080
-            iv_port.set(val)
-            self.config.port = val
-            self._update_command()
+            try:
+                raw = iv_port.get()
+                val = max(1, min(int(raw), 65535)) if raw else 8080
+                iv_port.set(val)
+                self.config.port = val
+                self._update_command()
+            except (ValueError, TypeError, tk.TclError):
+                pass
 
         port_frame = ttk.Frame(net_row)
         port_frame.pack(side="left", padx=(24, 0))
         ttk.Label(port_frame, text="Port:").pack(side="left", padx=(0, 4))
         def _port_spin_safe(*_):
             try:
-                val = int(iv_port.get())
+                raw = iv_port.get()
+                val = int(raw) if raw else 8080
                 if not (1 <= val <= 65535): return
                 iv_port.set(max(1, min(val, 65535)))
                 self.config.port = max(1, min(val, 65535))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
         def _port_spin_cmd(*_):
             try: self._update_command()
@@ -1049,7 +1083,8 @@ class LlamaServerGUI:
         sv_temp = tk.DoubleVar(value=0.8)
         def _temp_safe(*_):
             try:
-                val = float(sv_temp.get()) if sv_temp.get() else 0.8
+                raw = sv_temp.get()
+                val = float(raw) if raw else 0.8
                 self.config.temperature = max(0.05, min(val, 2.0))
                 sv_temp.set(max(0.05, min(val, 2.0)))
             except Exception:
@@ -1067,7 +1102,8 @@ class LlamaServerGUI:
         sv_minp = tk.DoubleVar(value=0.0)
         def _minp_safe(*_):
             try:
-                val = float(sv_minp.get()) if sv_minp.get() else 0.0
+                raw = sv_minp.get()
+                val = float(raw) if raw else 0.0
                 self.config.min_p = min(max(val, -1.0), 1.0)
                 sv_minp.set(min(max(val, -1.0), 1.0))
             except Exception:
@@ -1085,11 +1121,12 @@ class LlamaServerGUI:
         sv_topk = tk.IntVar(value=40)
         def _topk_safe(*_):
             try:
-                val = int(sv_topk.get())
+                raw = sv_topk.get()
+                val = int(raw) if raw else 40
                 if not (1 <= val <= 9999): return
                 self.config.top_k = max(1, min(val, 9999))
                 sv_topk.set(max(1, min(val, 9999)))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, tk.TclError):
                 pass
         def _topk_cmd(*_):
             try: self._update_command()
@@ -1104,7 +1141,8 @@ class LlamaServerGUI:
         sv_pp = tk.DoubleVar(value=0.0)
         def _pp_safe(*_):
             try:
-                val = float(sv_pp.get()) if sv_pp.get() else 0.0
+                raw = sv_pp.get()
+                val = float(raw) if raw else 0.0
                 self.config.presence_penalty = min(max(val, -2.0), 2.0)
                 sv_pp.set(min(max(val, -2.0), 2.0))
             except Exception:
@@ -1122,7 +1160,8 @@ class LlamaServerGUI:
         sv_topp = tk.DoubleVar(value=0.95)
         def _topp_safe(*_):
             try:
-                val = float(sv_topp.get()) if sv_topp.get() else 0.95
+                raw = sv_topp.get()
+                val = float(raw) if raw else 0.95
                 self.config.top_p = min(max(val, 0.05), 1.0)
                 sv_topp.set(min(max(val, 0.05), 1.0))
             except Exception:
@@ -1140,7 +1179,8 @@ class LlamaServerGUI:
         sv_rp = tk.DoubleVar(value=1.1)
         def _rp_safe(*_):
             try:
-                val = float(sv_rp.get()) if sv_rp.get() else 1.1
+                raw = sv_rp.get()
+                val = float(raw) if raw else 1.1
                 self.config.repeat_penalty = min(max(val, 1.0), 3.0)
                 sv_rp.set(min(max(val, 1.0), 3.0))
             except Exception:
@@ -1160,6 +1200,23 @@ class LlamaServerGUI:
 # Each section method creates a LabelFrame with its widgets and packs it into *parent*
 # Live command generation is triggered by Tk variable traces on every input field
 # ---------------------------------------------------------------------------
+
+    def _section_hardware_info(self, parent):
+        """Read-only hardware info display (CPU / GPU / VRAM / RAM)."""
+        frame = ttk.LabelFrame(parent, text="System Hardware", padding=(8, 6))
+        frame.pack(fill="both", padx=6, pady=4)
+
+        hw_text = (
+            f"CPU:    {self._hw.get('CPU', 'Unknown')}\n"
+            f"GPU:    {self._hw.get('GPU', 'Unknown')}\n"
+            f"VRAM:   {self._hw.get('VRAM', 'Unknown')}\n"
+            f"RAM:    {self._hw.get('RAM', 'Unknown')}"
+        )
+        info_label = tk.Label(
+            frame, text=hw_text, justify="left",
+            font=("Consolas", 10), bg="#f5f5f5"
+        )
+        info_label.pack(fill="x")
 
     def _browse_model(self):
         """Open file dialog to select a .gguf model file."""
