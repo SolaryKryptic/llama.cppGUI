@@ -11,8 +11,9 @@ from tkinter import filedialog, messagebox, Tk, Toplevel, StringVar
 import tkinter as tk
 from tkinter import ttk
 from hardwarescanner import scan_hardware
+import sys as _sys2
 
-_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".llama_server_gui.json")
+_CONFIG_PATH = os.path.join(os.getcwd(), ".llama_server_gui.json")
 
 def _load_config():
     """Load the full config (last_folder + all flag values) from disk."""
@@ -304,6 +305,7 @@ class LlamaServerGUI:
         saved_flags = saved.pop("flags", {})
         if saved_flags:
             import sys as _sys2
+            global _sys2
             print(f"DEBUG from_dict flags keys: {list(saved_flags.keys())}", file=_sys2.stderr)
             print(f"DEBUG spec_type in flags: {'spec_type' in saved_flags}, val={saved_flags.get('spec_type')!r}", file=_sys2.stderr)
             self.config.from_dict(saved_flags)

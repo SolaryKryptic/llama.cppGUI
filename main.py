@@ -7,7 +7,7 @@ from gui_builder import LlamaServerGUI
 root = tk.Tk()
 gui = LlamaServerGUI(root)
 
-# Disable mouse scroll wheel — prevents accidental value changes
+# Disable mouse scroll wheel to prevent accidental value changes
 def _no_scroll(event):
     return "break"
 root.bind("<MouseWheel>", _no_scroll)  # Windows/Linux
